@@ -1,7 +1,36 @@
 # Write your code here
 import random
 import sqlite3
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import sessionmaker
 
+# # create engine
+# engine = create_engine('sqlite:///card.s3db?check_same_thread=False')
+#
+# Base = declarative_base()
+#
+#
+# # define table
+# class Card(Base):
+#     __tablename__ = 'card'
+#     id = Column(Integer, primary_key=True)
+#     number = Column(String)
+#     pin = Column(String)
+#     balance = Column(Integer, default=0)
+#
+#     def __repr__(self):
+#         return self.number
+#
+#
+# # create database
+# Base.metadata.create_all(engine)
+#
+#
+# # create session for accessing database
+# Session = sessionmaker(bind=engine)
+# session = Session()
 accounts_list = []
 
 create_table = """
@@ -62,17 +91,22 @@ class BankAccount:
         self.card_num = card_num
         self.pin = card_pin
 
-    def get_balance(self):
-        print("Balance: " + str(self.balance))
+    # def get_balance(self):
+    #     print("Balance: " + str(self.balance))
+
+
+# id for accounts as PRIMARY KEY
+card_id = 0
 
 
 def store_account(account):
-    card_id = random.randint(0, 100)
+    global card_id
     accounts_list.append(account)
     # create and save new_account to database
-    create_account = f'INSERT INTO card (number, pin) VALUES ({account.card_num}, {account.pin})'
+    create_account = f'INSERT INTO card (id, number, pin) VALUES ({card_id}, {account.card_num}, {account.pin})'
     cur.execute(create_account)
     conn.commit()
+    card_id += 1  # after creating new account increment id by 1
 
 
 logged_in = False
@@ -80,10 +114,11 @@ logged_in = False
 
 def log_in(input_card_num, input_pin):
     auth_account = None
-    cur.execute('SELECT * FROM card')
+    cur.execute('SELECT number, pin FROM card')
     accounts = cur.fetchall()
+    print(accounts)
     for account in accounts:
-        if account[1] == input_card_num and account[2] == input_pin:
+        if account[0] == input_card_num and account[1] == input_pin:
             global logged_in
             logged_in = True
             auth_account = account
@@ -97,6 +132,114 @@ def log_in(input_card_num, input_pin):
 
 def log_out():
     print("You have successfully logged out!")
+
+
+def get_balance(account):
+    """
+    Show balance of user
+    :param account: logged user`s account
+    :return: print user`s balance
+    """
+    cur.execute(f"SELECT balance FROM card WHERE number={account[0]}")
+    balance = cur.fetchall()
+    print("Balance: {}".format(balance[0][0]))
+
+
+def add_income(user):
+    print("Enter income:")
+    amount = int(input())
+    cur.execute(f"""UPDATE card SET balance = balance + {amount} WHERE number={user[0]}""")
+    conn.commit()
+    print("Income was added!")
+
+
+def check_card__validation(card_number):
+    """
+    Check car number validation according to Luhn algorithm
+    :param card_number: input card number
+    :return: True if valid, False if not
+    """
+    card_num_sum = 0
+    for i in range(15):
+        new_digit = None
+        if i % 2 == 0:
+            new_digit = int(card_number[i]) * 2
+        else:
+            new_digit = int(card_number[i])
+
+        if new_digit > 9:
+            card_num_sum += (new_digit - 9)
+        else:
+            card_num_sum += new_digit
+
+    card_num_sum += int(card_number[-1])
+
+    if card_num_sum % 10 == 0:
+        return True
+    else:
+        return False
+
+
+def check_card_exists(card_number):
+    """
+    check card number is exists or not
+    :param card_number: input number
+    :return: True if exists, False if not
+    """
+    exists = False
+    cur.execute("SELECT number FROM card")
+    card_numbers = cur.fetchall()
+
+    for number in card_numbers:
+        if card_number == number[0]:
+            exists = True
+            break
+    return exists
+
+
+def do_transfer(user):
+    """
+    Transfer money from user`s account to other account
+    :param user: logged user
+    :return: message according to the successful or unsuccessful transfer
+    """
+    print("Transfer")
+    print("Enter card number:")
+    card_num = input()
+
+    if user[0] == card_num:
+        print("You can't transfer money to the same account!")
+        return
+
+    cur.execute(f"SELECT balance FROM card WHERE number = {user[0]}")
+    balance = cur.fetchall()
+
+    valid = check_card__validation(card_num)
+    if valid:
+        exists = check_card_exists(card_num)
+        if exists:
+            print("Enter how much money you want to transfer:")
+            amount = int(input())
+            if balance[0][0] >= amount:
+                cur.execute(f"UPDATE card SET balance = balance - {amount} WHERE id = {user[0]}")
+                conn.commit()
+                print("Success!")
+            else:
+                print("Not enough money!")
+        else:
+            print("Such a card does not exists.")
+    else:
+        print("Probably you made mistake in the card number. Please try again!")
+
+
+def close_account(user_id):
+    """
+    Delete user account
+    :param user_id: id of user`s account
+    :return: prints delete message
+    """
+    cur.execute(f"DELETE FROM card WHERER id = {user_id}")
+    conn.commit("The account has been closed!")
 
 
 def exit_app():
@@ -126,7 +269,10 @@ def show_logged_user_page(user):
     :return: 
     """
     print("1. Balance")
-    print("2. Log out")
+    print("2. Add income")
+    print("3. Do transfer")
+    print("4. Close account")
+    print("5. Log out")
     print("0. Exit")
 
     user_choice = int(input())
@@ -176,10 +322,22 @@ def handle_logged_user_page(user, choice):
     :return: 
     """
     if choice == 1:
-        user.get_balance()
+        get_balance(user)
         show_logged_user_page(user)
 
     elif choice == 2:
+        add_income(user)
+        show_logged_user_page(user)
+
+    elif choice == 3:
+        do_transfer(user)
+        show_logged_user_page(user)
+
+    elif choice == 4:
+        close_account(user[0])
+        show_init_page()
+
+    elif choice == 5:
         log_out()
         show_init_page()
     else:
@@ -187,3 +345,4 @@ def handle_logged_user_page(user, choice):
 
 
 show_init_page()
+
